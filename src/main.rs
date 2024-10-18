@@ -18,6 +18,8 @@ fn main() {
         }))
         .observe(body_follow_front)
         .observe(check_snake_eat_food)
+        .observe(check_snake_eat_body)
+        .observe(game_over)
         .run();
     println!("Game End!");
 }
@@ -83,14 +85,27 @@ struct NextBody {
 }
 
 #[derive(Event)]
-struct CheckSnakeEat {
+struct CheckSnakeEatFood {
     snake_position: Position,
 }
+
+#[derive(Event)]
+struct CheckSnakeEatBody {
+    snake_position: Position,
+}
+
+#[derive(Event)]
+struct GameOverEvent;
+
 
 
 fn setup(mut commands: Commands) {
     // camera
     commands.spawn(Camera2dBundle::default());
+    spawn_snake(commands);
+}
+
+fn spawn_snake(mut commands: Commands) {
     let default_position_x = ARENA_WIDTH / 2;
     let default_position_y = ARENA_HEIGHT / 2;
 
@@ -141,12 +156,11 @@ fn size_scaling(mut windows: Query<&mut Window>, mut query: Query<(&Size, &mut S
 }
 
 fn position_translation(mut windows: Query<&mut Window>, mut query: Query<(&Position, &mut Transform)>) {
-    fn convert(p: f32, bound_window: f32, bound_game: f32) -> f32 {
-        p / bound_game * bound_window - (bound_window / 2.)
+    fn convert(pos: f32, bound_window: f32, bound_game: f32) -> f32 {
+        pos * (bound_window / bound_game) - (bound_window / 2.0) + (bound_window / bound_game / 2.0)
     }
     let window = windows.single_mut();
     for (pos, mut transform) in &mut query.iter_mut() {
-        // transform.translation = Vec3::new(convert(pos.x as f32, window.width(), ARENA_WIDTH as f32), convert(pos.y as f32, window.height(), ARENA_HEIGHT as f32), 0.0);
         transform.translation.x = convert(pos.x as f32, window.width(), ARENA_WIDTH as f32);
         transform.translation.y = convert(pos.y as f32, window.height(), ARENA_HEIGHT as f32);
     }
@@ -174,7 +188,6 @@ fn snake_direction_change(keyboard_input: Res<ButtonInput<KeyCode>>, mut query: 
     }
 }
 
-// fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut SnakeHead, &mut Position)>, mut query_food: Query<(Entity, &Position), With<Food>>, mut timer: Local<SnakeMoveTimer>, time: Res<Time>,) {
 fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut SnakeHead, &mut Position)>, mut timer: Local<SnakeMoveTimer>, time: Res<Time>,) {
     timer.tick(time.delta());
     if timer.finished() {
@@ -197,63 +210,44 @@ fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut Snak
             }
         }
 
-        commands.trigger(CheckSnakeEat {
-            snake_position: Position {
-                x:next_translation_x,
-                y:next_translation_y},
-        });
-
-        if let Some(next_body) = snake_head.next_body {
-            commands.trigger(NextBody {
-                entity: next_body,
-                follow_position: Position {
-                    x:position_snake_head.x,
-                    y:position_snake_head.y},
+        println!("next_translation_x = {}, next_translation_y = {}", next_translation_x, next_translation_y);
+        if next_translation_x < 0 || next_translation_x >= ARENA_WIDTH || next_translation_y < 0 || next_translation_y >= ARENA_HEIGHT {
+            commands.trigger(GameOverEvent);
+        } else {
+            commands.trigger(CheckSnakeEatBody {
+                snake_position: Position {
+                    x: next_translation_x,
+                    y: next_translation_y},
             });
-        }
 
-        position_snake_head.x = next_translation_x;
-        position_snake_head.y = next_translation_y;
+            commands.trigger(CheckSnakeEatFood {
+                snake_position: Position {
+                    x: next_translation_x,
+                    y: next_translation_y},
+            });
+
+            if let Some(next_body) = snake_head.next_body {
+                commands.trigger(NextBody {
+                    entity: next_body,
+                    follow_position: Position {
+                        x: position_snake_head.x,
+                        y: position_snake_head.y},
+                });
+            }
+
+            position_snake_head.x = next_translation_x;
+            position_snake_head.y = next_translation_y;
+        }
     }
 }
 
-
-// fn food_spawner(mut commands: Commands, time: Res<Time>, mut query_position: Query<(&mut Position)>, mut timer: Local<FoodSpawnTimer>,) {
-//     timer.tick(time.delta());
-//     if timer.just_finished() {
-//         let mut rng = thread_rng();
-//         let rand_position_x = rng.gen_range(0..ARENA_WIDTH);
-//         let rand_position_y = rng.gen_range(0..ARENA_HEIGHT);
-//
-//         commands.spawn((
-//             SpriteBundle {
-//                 sprite: Sprite {
-//                     color: Color::srgba(1.0, 0.0, 1.0, 1.0),
-//                     ..default()
-//                 },
-//                 ..default()
-//             },
-//             Food,
-//             Position {
-//                 x: rand_position_x,
-//                 y: rand_position_y,
-//             },
-//             Size {
-//                 scale: 0.8
-//             },
-//             Collider,
-//         ));
-//     }
-// }
 fn food_spawner(mut commands: Commands, time: Res<Time>, mut query_position: Query<(&Position)>, mut timer: Local<FoodSpawnTimer>,) {
     timer.tick(time.delta());
     if timer.just_finished() {
-
         let mut numbers: Vec<i32> = (0..ARENA_WIDTH * ARENA_HEIGHT).collect();
         for (position) in &mut query_position.iter_mut() {
             numbers.retain(|&x| x != position.x + position.y * ARENA_HEIGHT);
         }
-        println!("Numbers: {:?}", numbers);
         let mut rng = thread_rng();
         if numbers.len() > 0 {
             let rand = rng.gen_range(0..numbers.len());
@@ -261,8 +255,6 @@ fn food_spawner(mut commands: Commands, time: Res<Time>, mut query_position: Que
             if let Some(rand_number) = rand_number {
                 let rand_position_x = rand_number % ARENA_WIDTH;
                 let rand_position_y = rand_number / ARENA_HEIGHT;
-
-                println!("rand_number = {} rand_number_x = {}, rand_number_y = {}", rand_number, rand_position_x, rand_position_y);
                 commands.spawn((
                     SpriteBundle {
                         sprite: Sprite {
@@ -309,7 +301,7 @@ fn spawn_segment(commands: &mut Commands, position_x: i32, position_y: i32) -> E
     )).id()
 }
 
-fn body_follow_front(trigger: Trigger<NextBody>, mut query_snake_body: Query<(&mut SnakeBody, &mut Position)>, mut commands: Commands) {
+fn body_follow_front(trigger: Trigger<NextBody>, mut commands: Commands, mut query_snake_body: Query<(&mut SnakeBody, &mut Position)>) {
     let event = trigger.event();
     if let Ok((snake_body, mut position)) = query_snake_body.get_mut(event.entity) {
         if let Some(next_body) = snake_body.next_body {
@@ -326,7 +318,7 @@ fn body_follow_front(trigger: Trigger<NextBody>, mut query_snake_body: Query<(&m
     }
 }
 
-fn check_snake_eat_food(trigger: Trigger<CheckSnakeEat>, mut query_snake_head: Query<(&SnakeHead)>, mut query_snake_body: Query<(&mut SnakeBody)>, mut query_food: Query<(&mut Position, Entity), With<Food>>, mut commands: Commands) {
+fn check_snake_eat_food(trigger: Trigger<CheckSnakeEatFood>, mut commands: Commands, mut query_snake_head: Query<(&SnakeHead)>, mut query_snake_body: Query<(&mut SnakeBody)>, mut query_food: Query<(&mut Position, Entity), With<Food>>) {
     let event = trigger.event();
     for (position, entity) in query_food.iter_mut() {
         if event.snake_position.x == position.x && event.snake_position.y == position.y {
@@ -339,7 +331,7 @@ fn check_snake_eat_food(trigger: Trigger<CheckSnakeEat>, mut query_snake_head: Q
                         if snake_body.next_body.is_some() {
                             entity_next_body = snake_body.next_body
                         } else {
-                            snake_body.next_body = Some(spawn_segment(&mut commands, 0, 0));
+                            snake_body.next_body = Some(spawn_segment(&mut commands, position.x, position.y));
                             break;
                         }
                     }
@@ -349,3 +341,26 @@ fn check_snake_eat_food(trigger: Trigger<CheckSnakeEat>, mut query_snake_head: Q
     }
 }
 
+fn check_snake_eat_body(trigger: Trigger<CheckSnakeEatBody>, mut commands: Commands, mut query_snake_body: Query<(&Position), With<SnakeBody>>) {
+    let event = trigger.event();
+    for (position) in query_snake_body.iter_mut() {
+        if event.snake_position.x == position.x && event.snake_position.y == position.y {
+            commands.trigger(GameOverEvent);
+        }
+    }
+}
+
+fn game_over(trigger: Trigger<GameOverEvent>, mut commands: Commands, mut query_snake_head: Query<Entity, With<SnakeHead>>, mut query_snake_body: Query<Entity, With<SnakeBody>>, mut query_food: Query<Entity, With<Food>>) {
+    let _event = trigger.event();
+    for (entity) in &mut query_snake_head.iter() {
+        commands.entity(entity).despawn();
+    }
+    for (entity) in &mut query_snake_body.iter() {
+        commands.entity(entity).despawn();
+    }
+    for (entity) in &mut query_food.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    spawn_snake(commands);
+}
