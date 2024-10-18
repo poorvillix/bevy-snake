@@ -8,7 +8,7 @@ fn main() {
     App::new()
         .add_systems(Startup, (setup).chain())
         .add_systems(Update, (snake_direction_change, food_spawner).chain())
-        .add_systems(FixedUpdate, snake_movement)
+        .add_systems(FixedUpdate, (snake_movement, size_scaling, position_translation).chain())
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Bevy Snake".to_string(),
@@ -18,6 +18,7 @@ fn main() {
             ..Default::default()
         }))
         .observe(body_follow_front)
+        .observe(check_snake_eat_food)
         .run();
     println!("Game End!");
 }
@@ -36,7 +37,7 @@ enum Direction {
 #[derive(Component)]
 struct SnakeHead {
     direction: Direction,
-    snake_body: Option<Entity>,
+    next_body: Option<Entity>,
 }
 
 #[derive(Deref, DerefMut)]
@@ -59,61 +60,97 @@ impl Default for FoodSpawnTimer {
 
 #[derive(Component)]
 struct SnakeBody {
-    snake_body: Option<Entity>,
+    next_body: Option<Entity>,
 }
 
+#[derive(Component)]
+struct Position {
+    x: i32,
+    y: i32,
+}
+
+#[derive(Component)]
+struct Size {
+    scale: f32,
+}
 
 #[derive(Component)]
 struct Collider;
 
+#[derive(Event)]
+struct NextBody {
+    entity: Entity,
+    follow_position: Position,
+}
 
+#[derive(Event)]
+struct CheckSnakeEat {
+    snake_position: Position,
+}
 
-fn setup(mut commands: Commands, mut windows: Query<&mut Window>) {
+fn setup(mut commands: Commands) {
     // camera
     commands.spawn(Camera2dBundle::default());
+    let default_position_x = ARENA_WIDTH / 2;
+    let default_position_y = ARENA_HEIGHT / 2;
 
-    // snake head
-    let window = &windows.single_mut();
-    let mut default_direction = Direction::Up;
+    let default_direction = Direction::Up;
     let first_body: Option<Entity> = match default_direction {
         Direction::Left => {
-            Some(spawn_segment(&mut commands, window, get_width(window) / 2.0 + get_width(window), get_height(window) / 2.0))
+            Some(spawn_segment(&mut commands, default_position_x + 1, default_position_y))
         },
         Direction::Right => {
-            Some(spawn_segment(&mut commands, window, get_width(window) / 2.0 - get_width(window), get_height(window) / 2.0))
+            Some(spawn_segment(&mut commands, default_position_x - 1, default_position_y))
         },
         Direction::Down => {
-            Some(spawn_segment(&mut commands, window, get_width(window) / 2.0, get_height(window) / 2.0 + get_height(window)))
+            Some(spawn_segment(&mut commands, default_position_x, default_position_y + 1))
         },
         Direction::Up => {
-            Some(spawn_segment(&mut commands, window, get_width(window) / 2.0, get_height(window) / 2.0 - get_height(window)))
+            Some(spawn_segment(&mut commands, default_position_x, default_position_y - 1))
         },
     };
+    // snake head
     commands.spawn((
         SpriteBundle {
             sprite: Sprite {
                 color: Color::srgba(0.7, 0.7, 0.7, 1.0),
-                custom_size: Some(Vec2::new(get_width(window), get_height(window))),
-                ..default()
-            },
-            transform: Transform {
-                translation: Vec3::new(get_width(window) / 2.0, get_height(window) / 2.0, 0.0),
-                scale: Vec3::new(0.8, 0.8, 1.0),
                 ..default()
             },
             ..default()
         },
         SnakeHead {
             direction: default_direction,
-            snake_body: first_body,
+            next_body: first_body,
+        },
+        Position {
+            x: default_position_x,
+            y: default_position_y,
+        },
+        Size {
+            scale: 0.8
         },
         Collider,
     ));
-
-
 }
 
+fn size_scaling(mut windows: Query<&mut Window>, mut query: Query<(&Size, &mut Sprite)>) {
+    let window = windows.single_mut();
+    for (size, mut sprite) in &mut query.iter_mut() {
+        sprite.custom_size = Some(Vec2::new(window.width() / ARENA_WIDTH as f32 * size.scale, window.height() / ARENA_HEIGHT as f32 * size.scale));
+    }
+}
 
+fn position_translation(mut windows: Query<&mut Window>, mut query: Query<(&Position, &mut Transform)>) {
+    fn convert(p: f32, bound_window: f32, bound_game: f32) -> f32 {
+        p / bound_game * bound_window - (bound_window / 2.)
+    }
+    let window = windows.single_mut();
+    for (pos, mut transform) in &mut query.iter_mut() {
+        // transform.translation = Vec3::new(convert(pos.x as f32, window.width(), ARENA_WIDTH as f32), convert(pos.y as f32, window.height(), ARENA_HEIGHT as f32), 0.0);
+        transform.translation.x = convert(pos.x as f32, window.width(), ARENA_WIDTH as f32);
+        transform.translation.y = convert(pos.y as f32, window.height(), ARENA_HEIGHT as f32);
+    }
+}
 
 fn snake_direction_change(keyboard_input: Res<ButtonInput<KeyCode>>, mut query: Query<&mut SnakeHead>) {
     if let Some(mut head) = query.iter_mut().next() {
@@ -137,120 +174,139 @@ fn snake_direction_change(keyboard_input: Res<ButtonInput<KeyCode>>, mut query: 
     }
 }
 
-
-// fn snake_movement(mut commands: Commands, mut windows: Query<&mut Window>, mut query_snake_head: Query<&mut SnakeHead>, mut query_head_transform: Query<&mut Transform, With<SnakeHead>>, bodies: &mut Query<&mut SnakeBody>, query_body_transform: &mut Query<&mut Transform, With<SnakeBody>>, mut timer: Local<SnakeMoveTimer>, time: Res<Time>,) {
-fn snake_movement(mut commands: Commands, mut windows: Query<&mut Window>, mut query_snake_head: Query<&mut SnakeHead>, mut query_head_transform: Query<&mut Transform, With<SnakeHead>>, mut timer: Local<SnakeMoveTimer>, time: Res<Time>,) {
+// fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut SnakeHead, &mut Position)>, mut query_food: Query<(Entity, &Position), With<Food>>, mut timer: Local<SnakeMoveTimer>, time: Res<Time>,) {
+fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut SnakeHead, &mut Position)>, mut timer: Local<SnakeMoveTimer>, time: Res<Time>,) {
     timer.tick(time.delta());
     if timer.finished() {
-        let window = &windows.single_mut();
-        for mut transform in query_head_transform.iter_mut() {
-            // body_movement(snake_head.snake_body, bodies, query_body_transform, transform.translation.x, transform.translation.y);
-            let snake_head = query_snake_head.single_mut();
-            if let Some(next_body) = snake_head.snake_body {
-                println!("SnakeHead snake body: {:?}", snake_head.snake_body);
-                commands.trigger(BackBody {
-                    entity: next_body,
-                    follow_position: Vec3::new(transform.translation.x, transform.translation.y, 0.0),
-                });
+        let (snake_head, mut position_snake_head) = query_snake_head.single_mut();
+
+        let mut next_translation_x = position_snake_head.x;
+        let mut next_translation_y = position_snake_head.y;
+        match snake_head.direction {
+            Direction::Left => {
+                next_translation_x -= 1;
             }
-            match snake_head.direction {
-                Direction::Left => {
-                    transform.translation.x -= get_width(window);
-                }
-                Direction::Right => {
-                    transform.translation.x += get_width(window);
-                }
-                Direction::Down => {
-                    transform.translation.y -= get_height(window);
-                }
-                Direction::Up => {
-                    transform.translation.y += get_height(window);
-                }
+            Direction::Right => {
+                next_translation_x += 1;
+            }
+            Direction::Down => {
+                next_translation_y -= 1;
+            }
+            Direction::Up => {
+                next_translation_y += 1;
             }
         }
+
+        commands.trigger(CheckSnakeEat {
+            snake_position: Position {
+                x:next_translation_x,
+                y:next_translation_y},
+        });
+
+        if let Some(next_body) = snake_head.next_body {
+            commands.trigger(NextBody {
+                entity: next_body,
+                follow_position: Position {
+                    x:position_snake_head.x,
+                    y:position_snake_head.y},
+            });
+        }
+
+        position_snake_head.x = next_translation_x;
+        position_snake_head.y = next_translation_y;
     }
 }
 
-fn food_spawner(mut commands: Commands, mut windows: Query<&mut Window>, time: Res<Time>, mut timer: Local<FoodSpawnTimer>,) {
+
+fn food_spawner(mut commands: Commands, time: Res<Time>, mut timer: Local<FoodSpawnTimer>,) {
     timer.tick(time.delta());
     if timer.just_finished() {
-        let window = &windows.single_mut();
         let mut rng = thread_rng();
         let rand_position_x = rng.gen_range(0..ARENA_WIDTH);
-        let translation_x = get_width(window) / 2.0 + get_width(window) * (rand_position_x - (ARENA_WIDTH / 2)) as f32;
         let rand_position_y = rng.gen_range(0..ARENA_HEIGHT);
-        let translation_y = get_height(window) / 2.0 + get_height(window) * (rand_position_y - (ARENA_HEIGHT / 2)) as f32;
 
         commands.spawn((
             SpriteBundle {
                 sprite: Sprite {
                     color: Color::srgba(1.0, 0.0, 1.0, 1.0),
-                    custom_size: Some(Vec2::new(get_width(window), get_height(window))),
-                    ..default()
-                },
-                transform: Transform {
-                    translation: Vec3::new(translation_x, translation_y, 0.0),
-                    scale: Vec3::new(0.8, 0.8, 1.0),
                     ..default()
                 },
                 ..default()
             },
             Food,
+            Position {
+                x: rand_position_x,
+                y: rand_position_y,
+            },
+            Size {
+                scale: 0.8
+            },
             Collider,
         ));
 
     }
 }
 
-fn spawn_segment(commands: &mut Commands, window: &Mut<Window>, x: f32, y: f32) -> Entity {
+fn spawn_segment(commands: &mut Commands, position_x: i32, position_y: i32) -> Entity {
     commands.spawn((
         SpriteBundle {
             sprite: Sprite {
                 color: Color::srgba(0.7, 0.7, 0.7, 1.0),
-                custom_size: Some(Vec2::new(get_width(window), get_height(window))),
-                ..default()
-            },
-            transform: Transform {
-                translation: Vec3::new(x, y, 0.0),
-                scale: Vec3::new(0.65, 0.65, 1.0),
                 ..default()
             },
             ..default()
         },
         SnakeBody {
-            snake_body: None,
+            next_body: None,
+        },
+        Position {
+            x: position_x,
+            y: position_y,
+        },
+        Size {
+            scale: 0.65
         },
         Collider,
     )).id()
 }
 
-#[derive(Event)]
-struct BackBody {
-    entity: Entity,
-    follow_position: Vec3,
+fn body_follow_front(trigger: Trigger<NextBody>, mut query_snake_body: Query<(&mut SnakeBody, &mut Position)>, mut commands: Commands) {
+    let event = trigger.event();
+    if let Ok((snake_body, mut position)) = query_snake_body.get_mut(event.entity) {
+        if let Some(next_body) = snake_body.next_body {
+            commands.trigger(NextBody {
+                entity: next_body,
+                follow_position: Position {
+                    x: position.x,
+                    y: position.y,
+                },
+            });
+        }
+        position.x = event.follow_position.x;
+        position.y = event.follow_position.y;
+    }
 }
 
-fn body_follow_front(trigger: Trigger<BackBody>, mut query_body: Query<&SnakeBody>, mut query_body_transform: Query<&mut Transform, With<SnakeBody>>, mut commands: Commands) {
+fn check_snake_eat_food(trigger: Trigger<CheckSnakeEat>, mut query_snake_head: Query<(&SnakeHead)>, mut query_snake_body: Query<(&mut SnakeBody)>, mut query_food: Query<(&mut Position, Entity), With<Food>>, mut commands: Commands) {
     let event = trigger.event();
-    if let Ok(snake_body) = query_body.get_mut(event.entity) {
-        if let Ok(mut body_transform) = query_body_transform.get_mut(event.entity) {
-            if let Some(next_body) = snake_body.snake_body {
-                commands.trigger(BackBody {
-                    entity: next_body,
-                    follow_position: Vec3::new(body_transform.translation.x, body_transform.translation.y, 0.0),
-                });
+    for (position, entity) in query_food.iter_mut() {
+        if event.snake_position.x == position.x && event.snake_position.y == position.y {
+            commands.entity(entity).despawn();
+            let snake_head = query_snake_head.single_mut();
+            let mut entity_next_body = snake_head.next_body;
+            loop {
+                if let Some(some_entity_next_body) = entity_next_body {
+                    if let Ok(mut snake_body) = query_snake_body.get_mut(some_entity_next_body) {
+                        if snake_body.next_body.is_some() {
+                            entity_next_body = snake_body.next_body
+                        } else {
+                            snake_body.next_body = Some(spawn_segment(&mut commands, 0, 0));
+                            break;
+                        }
+                    }
+                }
             }
-            body_transform.translation.x = event.follow_position.x;
-            body_transform.translation.y = event.follow_position.y;
-            body_transform.translation.z = event.follow_position.z;
         }
     }
 }
 
-fn get_width(window: &Mut<Window>) -> f32 {
-    window.width() / ARENA_WIDTH as f32
-}
-
-fn get_height(window: &Mut<Window>) -> f32 {
-    window.height() / ARENA_HEIGHT as f32
-}
