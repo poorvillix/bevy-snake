@@ -1,10 +1,9 @@
 use bevy::prelude::*;
+use bevy::render::render_resource::ShaderType;
 use rand::prelude::*;
 
 fn main() {
     println!("Game Start!");
-
-    println!("222");
     App::new()
         .add_systems(Startup, (setup).chain())
         .add_systems(Update, (snake_direction_change, food_spawner).chain())
@@ -87,6 +86,7 @@ struct NextBody {
 struct CheckSnakeEat {
     snake_position: Position,
 }
+
 
 fn setup(mut commands: Commands) {
     // camera
@@ -218,32 +218,71 @@ fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut Snak
 }
 
 
-fn food_spawner(mut commands: Commands, time: Res<Time>, mut timer: Local<FoodSpawnTimer>,) {
+// fn food_spawner(mut commands: Commands, time: Res<Time>, mut query_position: Query<(&mut Position)>, mut timer: Local<FoodSpawnTimer>,) {
+//     timer.tick(time.delta());
+//     if timer.just_finished() {
+//         let mut rng = thread_rng();
+//         let rand_position_x = rng.gen_range(0..ARENA_WIDTH);
+//         let rand_position_y = rng.gen_range(0..ARENA_HEIGHT);
+//
+//         commands.spawn((
+//             SpriteBundle {
+//                 sprite: Sprite {
+//                     color: Color::srgba(1.0, 0.0, 1.0, 1.0),
+//                     ..default()
+//                 },
+//                 ..default()
+//             },
+//             Food,
+//             Position {
+//                 x: rand_position_x,
+//                 y: rand_position_y,
+//             },
+//             Size {
+//                 scale: 0.8
+//             },
+//             Collider,
+//         ));
+//     }
+// }
+fn food_spawner(mut commands: Commands, time: Res<Time>, mut query_position: Query<(&Position)>, mut timer: Local<FoodSpawnTimer>,) {
     timer.tick(time.delta());
     if timer.just_finished() {
+
+        let mut numbers: Vec<i32> = (0..ARENA_WIDTH * ARENA_HEIGHT).collect();
+        for (position) in &mut query_position.iter_mut() {
+            numbers.retain(|&x| x != position.x + position.y * ARENA_HEIGHT);
+        }
+        println!("Numbers: {:?}", numbers);
         let mut rng = thread_rng();
-        let rand_position_x = rng.gen_range(0..ARENA_WIDTH);
-        let rand_position_y = rng.gen_range(0..ARENA_HEIGHT);
+        if numbers.len() > 0 {
+            let rand = rng.gen_range(0..numbers.len());
+            let rand_number = numbers.get(rand);
+            if let Some(rand_number) = rand_number {
+                let rand_position_x = rand_number % ARENA_WIDTH;
+                let rand_position_y = rand_number / ARENA_HEIGHT;
 
-        commands.spawn((
-            SpriteBundle {
-                sprite: Sprite {
-                    color: Color::srgba(1.0, 0.0, 1.0, 1.0),
-                    ..default()
-                },
-                ..default()
-            },
-            Food,
-            Position {
-                x: rand_position_x,
-                y: rand_position_y,
-            },
-            Size {
-                scale: 0.8
-            },
-            Collider,
-        ));
-
+                println!("rand_number = {} rand_number_x = {}, rand_number_y = {}", rand_number, rand_position_x, rand_position_y);
+                commands.spawn((
+                    SpriteBundle {
+                        sprite: Sprite {
+                            color: Color::srgba(1.0, 0.0, 1.0, 1.0),
+                            ..default()
+                        },
+                        ..default()
+                    },
+                    Food,
+                    Position {
+                        x: rand_position_x,
+                        y: rand_position_y,
+                    },
+                    Size {
+                        scale: 0.8
+                    },
+                    Collider,
+                ));
+            }
+        }
     }
 }
 
