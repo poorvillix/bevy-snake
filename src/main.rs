@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy::render::render_resource::ShaderType;
 use rand::prelude::*;
 
 fn main() {
@@ -46,7 +45,7 @@ struct SnakeHead {
 struct SnakeMoveTimer(Timer);
 impl Default for SnakeMoveTimer {
     fn default() -> Self {
-        Self(Timer::from_seconds(1.0, TimerMode::Repeating))
+        Self(Timer::from_seconds(0.8, TimerMode::Repeating))
     }
 }
 
@@ -277,10 +276,10 @@ fn spawn_body(commands: &mut Commands, position_x: i32, position_y: i32) -> Enti
     )).id()
 }
 
-fn food_spawner(trigger: Trigger<SpawnFood>, mut commands: Commands, mut query_position: Query<(&Position)>) {
+fn food_spawner(trigger: Trigger<SpawnFood>, mut commands: Commands, mut query_position: Query<&Position>) {
     let _event = trigger.event();
     let mut numbers: Vec<i32> = (0..ARENA_WIDTH * ARENA_HEIGHT).collect();
-    for (position) in &mut query_position.iter_mut() {
+    for position in &mut query_position.iter_mut() {
         numbers.retain(|&x| x != position.x + position.y * ARENA_HEIGHT);
     }
     let mut rng = thread_rng();
@@ -331,7 +330,7 @@ fn body_follow_front(trigger: Trigger<NextBody>, mut commands: Commands, mut que
     }
 }
 
-fn check_snake_eat_food(trigger: Trigger<CheckSnakeEatFood>, mut commands: Commands, mut query_snake_head: Query<(&SnakeHead)>, mut query_snake_body: Query<(&mut SnakeBody)>, mut query_food: Query<(&mut Position, Entity), With<Food>>) {
+fn check_snake_eat_food(trigger: Trigger<CheckSnakeEatFood>, mut commands: Commands, mut query_snake_head: Query<&SnakeHead>, mut query_snake_body: Query<&mut SnakeBody>, mut query_food: Query<(&mut Position, Entity), With<Food>>) {
     let event = trigger.event();
     for (position, entity) in query_food.iter_mut() {
         if event.snake_position.x == position.x && event.snake_position.y == position.y {
@@ -355,9 +354,9 @@ fn check_snake_eat_food(trigger: Trigger<CheckSnakeEatFood>, mut commands: Comma
     }
 }
 
-fn check_snake_eat_body(trigger: Trigger<CheckSnakeEatBody>, mut commands: Commands, mut query_snake_body: Query<(&Position), With<SnakeBody>>) {
+fn check_snake_eat_body(trigger: Trigger<CheckSnakeEatBody>, mut commands: Commands, mut query_snake_body: Query<&Position, With<SnakeBody>>) {
     let event = trigger.event();
-    for (position) in query_snake_body.iter_mut() {
+    for position in query_snake_body.iter_mut() {
         if event.snake_position.x == position.x && event.snake_position.y == position.y {
             commands.trigger(GameOverEvent);
         }
