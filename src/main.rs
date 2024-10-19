@@ -6,7 +6,7 @@ fn main() {
     println!("Game Start!");
     App::new()
         .add_systems(Startup, (setup).chain())
-        .add_systems(Update, (snake_direction_change, food_spawner).chain())
+        .add_systems(Update, (snake_direction_change).chain())
         .add_systems(FixedUpdate, (snake_movement, size_scaling, position_translation).chain())
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -16,6 +16,7 @@ fn main() {
             }),
             ..Default::default()
         }))
+        .observe(food_spawner)
         .observe(body_follow_front)
         .observe(check_snake_eat_food)
         .observe(check_snake_eat_body)
@@ -51,13 +52,6 @@ impl Default for SnakeMoveTimer {
 
 #[derive(Component)]
 struct Food;
-#[derive(Deref, DerefMut)]
-struct FoodSpawnTimer(Timer);
-impl Default for FoodSpawnTimer {
-    fn default() -> Self {
-        Self(Timer::from_seconds(1.0, TimerMode::Repeating))
-    }
-}
 
 #[derive(Component)]
 struct SnakeBody {
@@ -79,6 +73,9 @@ struct Size {
 struct Collider;
 
 #[derive(Event)]
+struct SpawnFood;
+
+#[derive(Event)]
 struct NextBody {
     entity: Entity,
     follow_position: Position,
@@ -97,31 +94,30 @@ struct CheckSnakeEatBody {
 #[derive(Event)]
 struct GameOverEvent;
 
-
-
 fn setup(mut commands: Commands) {
     // camera
     commands.spawn(Camera2dBundle::default());
-    spawn_snake(commands);
+    spawn_snake(&mut commands);
+    commands.trigger(SpawnFood);
 }
 
-fn spawn_snake(mut commands: Commands) {
+fn spawn_snake(mut commands: &mut Commands) {
     let default_position_x = ARENA_WIDTH / 2;
     let default_position_y = ARENA_HEIGHT / 2;
 
     let default_direction = Direction::Up;
     let first_body: Option<Entity> = match default_direction {
         Direction::Left => {
-            Some(spawn_segment(&mut commands, default_position_x + 1, default_position_y))
+            Some(spawn_body(&mut commands, default_position_x + 1, default_position_y))
         },
         Direction::Right => {
-            Some(spawn_segment(&mut commands, default_position_x - 1, default_position_y))
+            Some(spawn_body(&mut commands, default_position_x - 1, default_position_y))
         },
         Direction::Down => {
-            Some(spawn_segment(&mut commands, default_position_x, default_position_y + 1))
+            Some(spawn_body(&mut commands, default_position_x, default_position_y + 1))
         },
         Direction::Up => {
-            Some(spawn_segment(&mut commands, default_position_x, default_position_y - 1))
+            Some(spawn_body(&mut commands, default_position_x, default_position_y - 1))
         },
     };
     // snake head
@@ -152,6 +148,18 @@ fn size_scaling(mut windows: Query<&mut Window>, mut query: Query<(&Size, &mut S
     let window = windows.single_mut();
     for (size, mut sprite) in &mut query.iter_mut() {
         sprite.custom_size = Some(Vec2::new(window.width() / ARENA_WIDTH as f32 * size.scale, window.height() / ARENA_HEIGHT as f32 * size.scale));
+        if let Some(mut custom_size) = sprite.custom_size {
+            let width = window.width() / ARENA_WIDTH as f32 * size.scale;
+            let height = window.height() / ARENA_HEIGHT as f32 * size.scale;
+            if width != custom_size.x {
+                custom_size.x = width;
+            }
+            if height != custom_size.y {
+                custom_size.y = height;
+            }
+        } else {
+            sprite.custom_size = Some(Vec2::new(window.width() / ARENA_WIDTH as f32 * size.scale, window.height() / ARENA_HEIGHT as f32 * size.scale));
+        }
     }
 }
 
@@ -161,8 +169,14 @@ fn position_translation(mut windows: Query<&mut Window>, mut query: Query<(&Posi
     }
     let window = windows.single_mut();
     for (pos, mut transform) in &mut query.iter_mut() {
-        transform.translation.x = convert(pos.x as f32, window.width(), ARENA_WIDTH as f32);
-        transform.translation.y = convert(pos.y as f32, window.height(), ARENA_HEIGHT as f32);
+        let translation_x = convert(pos.x as f32, window.width(), ARENA_WIDTH as f32);
+        let translation_y = convert(pos.y as f32, window.height(), ARENA_HEIGHT as f32);
+        if translation_x != transform.translation.x {
+            transform.translation.x = translation_x;
+        }
+        if translation_y != transform.translation.y {
+            transform.translation.y = translation_y;
+        }
     }
 }
 
@@ -210,7 +224,6 @@ fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut Snak
             }
         }
 
-        println!("next_translation_x = {}, next_translation_y = {}", next_translation_x, next_translation_y);
         if next_translation_x < 0 || next_translation_x >= ARENA_WIDTH || next_translation_y < 0 || next_translation_y >= ARENA_HEIGHT {
             commands.trigger(GameOverEvent);
         } else {
@@ -241,48 +254,11 @@ fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut Snak
     }
 }
 
-fn food_spawner(mut commands: Commands, time: Res<Time>, mut query_position: Query<(&Position)>, mut timer: Local<FoodSpawnTimer>,) {
-    timer.tick(time.delta());
-    if timer.just_finished() {
-        let mut numbers: Vec<i32> = (0..ARENA_WIDTH * ARENA_HEIGHT).collect();
-        for (position) in &mut query_position.iter_mut() {
-            numbers.retain(|&x| x != position.x + position.y * ARENA_HEIGHT);
-        }
-        let mut rng = thread_rng();
-        if numbers.len() > 0 {
-            let rand = rng.gen_range(0..numbers.len());
-            let rand_number = numbers.get(rand);
-            if let Some(rand_number) = rand_number {
-                let rand_position_x = rand_number % ARENA_WIDTH;
-                let rand_position_y = rand_number / ARENA_HEIGHT;
-                commands.spawn((
-                    SpriteBundle {
-                        sprite: Sprite {
-                            color: Color::srgba(1.0, 0.0, 1.0, 1.0),
-                            ..default()
-                        },
-                        ..default()
-                    },
-                    Food,
-                    Position {
-                        x: rand_position_x,
-                        y: rand_position_y,
-                    },
-                    Size {
-                        scale: 0.8
-                    },
-                    Collider,
-                ));
-            }
-        }
-    }
-}
-
-fn spawn_segment(commands: &mut Commands, position_x: i32, position_y: i32) -> Entity {
+fn spawn_body(commands: &mut Commands, position_x: i32, position_y: i32) -> Entity {
     commands.spawn((
         SpriteBundle {
             sprite: Sprite {
-                color: Color::srgba(0.7, 0.7, 0.7, 1.0),
+                color: Color::srgba(0.3, 0.3, 0.3, 1.0),
                 ..default()
             },
             ..default()
@@ -299,6 +275,43 @@ fn spawn_segment(commands: &mut Commands, position_x: i32, position_y: i32) -> E
         },
         Collider,
     )).id()
+}
+
+fn food_spawner(trigger: Trigger<SpawnFood>, mut commands: Commands, mut query_position: Query<(&Position)>) {
+    let _event = trigger.event();
+    let mut numbers: Vec<i32> = (0..ARENA_WIDTH * ARENA_HEIGHT).collect();
+    for (position) in &mut query_position.iter_mut() {
+        numbers.retain(|&x| x != position.x + position.y * ARENA_HEIGHT);
+    }
+    let mut rng = thread_rng();
+    if numbers.len() > 0 {
+        let rand = rng.gen_range(0..numbers.len());
+        let rand_number = numbers.get(rand);
+        if let Some(rand_number) = rand_number {
+            let rand_position_x = rand_number % ARENA_WIDTH;
+            let rand_position_y = rand_number / ARENA_HEIGHT;
+            commands.spawn((
+                SpriteBundle {
+                    sprite: Sprite {
+                        color: Color::srgba(1.0, 0.0, 1.0, 1.0),
+                        ..default()
+                    },
+                    ..default()
+                },
+                Food,
+                Position {
+                    x: rand_position_x,
+                    y: rand_position_y,
+                },
+                Size {
+                    scale: 0.8
+                },
+                Collider,
+            ));
+        }
+    } else {
+        commands.trigger(GameOverEvent);
+    }
 }
 
 fn body_follow_front(trigger: Trigger<NextBody>, mut commands: Commands, mut query_snake_body: Query<(&mut SnakeBody, &mut Position)>) {
@@ -331,12 +344,13 @@ fn check_snake_eat_food(trigger: Trigger<CheckSnakeEatFood>, mut commands: Comma
                         if snake_body.next_body.is_some() {
                             entity_next_body = snake_body.next_body
                         } else {
-                            snake_body.next_body = Some(spawn_segment(&mut commands, position.x, position.y));
+                            snake_body.next_body = Some(spawn_body(&mut commands, position.x, position.y));
                             break;
                         }
                     }
                 }
             }
+            commands.trigger(SpawnFood);
         }
     }
 }
@@ -350,17 +364,18 @@ fn check_snake_eat_body(trigger: Trigger<CheckSnakeEatBody>, mut commands: Comma
     }
 }
 
-fn game_over(trigger: Trigger<GameOverEvent>, mut commands: Commands, mut query_snake_head: Query<Entity, With<SnakeHead>>, mut query_snake_body: Query<Entity, With<SnakeBody>>, mut query_food: Query<Entity, With<Food>>) {
+fn game_over(trigger: Trigger<GameOverEvent>, mut commands: Commands, query_snake_head: Query<Entity, With<SnakeHead>>, query_snake_body: Query<Entity, With<SnakeBody>>, query_food: Query<Entity, With<Food>>) {
     let _event = trigger.event();
-    for (entity) in &mut query_snake_head.iter() {
+    for entity in query_snake_head.iter() {
         commands.entity(entity).despawn();
     }
-    for (entity) in &mut query_snake_body.iter() {
+    for entity in query_snake_body.iter() {
         commands.entity(entity).despawn();
     }
-    for (entity) in &mut query_food.iter() {
+    for entity in query_food.iter() {
         commands.entity(entity).despawn();
     }
 
-    spawn_snake(commands);
+    spawn_snake(&mut commands);
+    commands.trigger(SpawnFood);
 }
