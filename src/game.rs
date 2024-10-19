@@ -5,27 +5,14 @@ use super::{despawn_screen, DisplayQuality, GameState, Volume, TEXT_COLOR};
 pub fn game_plugin(app: &mut App) {
     app.add_systems(OnEnter(GameState::Game), game_setup)
         .add_systems(OnExit(GameState::Game), despawn_screen::<OnGameScreen>)
-        .add_systems(FixedUpdate, (snake_direction_change, snake_movement, size_scaling, position_translation).chain())
+        .add_systems(Update, (snake_direction_change).chain())
+        .add_systems(FixedUpdate, (snake_movement, size_scaling, position_translation).chain())
         .observe(food_spawner)
         .observe(body_follow_front)
         .observe(check_snake_eat_food)
         .observe(check_snake_eat_body)
         .observe(game_over);
 }
-// fn game_setup(app: &mut App) {z
-//     println!("Game Start!");
-//     app
-//         .add_systems(Startup, (setup).chain())
-//         .add_systems(Update, (snake_direction_change).chain())
-//         .add_systems(FixedUpdate, (snake_movement, size_scaling, position_translation).chain())
-//         .observe(food_spawner)
-//         .observe(body_follow_front)
-//         .observe(check_snake_eat_food)
-//         .observe(check_snake_eat_body)
-//         .observe(game_over)
-//         .run();
-//     println!("Game End!");
-// }
 
 const ARENA_WIDTH: i32 = 10;
 const ARENA_HEIGHT: i32 = 10;
