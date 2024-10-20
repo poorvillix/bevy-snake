@@ -7,6 +7,7 @@ pub fn game_plugin(app: &mut App) {
         .add_systems(OnExit(GameState::Game), despawn_screen::<OnGameScreen>)
         .add_systems(Update, (snake_direction_change).chain())
         .add_systems(FixedUpdate, (snake_movement, size_scaling, position_translation).chain())
+        .observe(body_spawner)
         .observe(food_spawner)
         .observe(body_follow_front)
         .observe(check_snake_eat_food)
@@ -19,16 +20,16 @@ const ARENA_HEIGHT: i32 = 10;
 
 #[derive(Debug)]
 enum Direction {
-    Left,
     Up,
-    Right,
     Down,
+    Left,
+    Right,
 }
 
 #[derive(Component)]
 struct SnakeHead {
     direction: Direction,
-    next_body: Option<Entity>,
+    bodies: Vec<Entity>,
 }
 
 #[derive(Deref, DerefMut)]
@@ -46,9 +47,7 @@ struct OnGameScreen;
 struct Food;
 
 #[derive(Component)]
-struct SnakeBody {
-    next_body: Option<Entity>,
-}
+struct SnakeBody;
 
 #[derive(Component)]
 struct Position {
@@ -60,17 +59,18 @@ struct Position {
 struct Size {
     scale: f32,
 }
-
 #[derive(Component)]
 struct Collider;
-
+#[derive(Event)]
+struct SpawnBody {
+    body_position: Position,
+}
 #[derive(Event)]
 struct SpawnFood;
 
 #[derive(Event)]
-struct NextBody {
-    entity: Entity,
-    follow_position: Position,
+struct FollowBody {
+    snake_position: Position,
 }
 
 #[derive(Event)]
@@ -107,23 +107,23 @@ fn game_setup(mut commands: Commands) {
     commands.trigger(SpawnFood);
 }
 
-fn spawn_snake(mut commands: &mut Commands) {
+fn spawn_snake(commands: &mut Commands) {
     let default_position_x = ARENA_WIDTH / 2;
     let default_position_y = ARENA_HEIGHT / 2;
 
     let default_direction = Direction::Up;
-    let first_body: Option<Entity> = match default_direction {
+    let (first_body_position_x, first_body_position_y) = match default_direction {
         Direction::Left => {
-            Some(spawn_body(&mut commands, default_position_x + 1, default_position_y))
+            (default_position_x + 1, default_position_y)
         },
         Direction::Right => {
-            Some(spawn_body(&mut commands, default_position_x - 1, default_position_y))
+            (default_position_x - 1, default_position_y)
         },
         Direction::Down => {
-            Some(spawn_body(&mut commands, default_position_x, default_position_y + 1))
+            (default_position_x, default_position_y + 1)
         },
         Direction::Up => {
-            Some(spawn_body(&mut commands, default_position_x, default_position_y - 1))
+            (default_position_x, default_position_y - 1)
         },
     };
     // snake head
@@ -137,7 +137,7 @@ fn spawn_snake(mut commands: &mut Commands) {
         },
         SnakeHead {
             direction: default_direction,
-            next_body: first_body,
+            bodies: Vec::new(),
         },
         Position {
             x: default_position_x,
@@ -148,6 +148,13 @@ fn spawn_snake(mut commands: &mut Commands) {
         },
         Collider,
     ));
+
+    commands.trigger(SpawnBody {
+        body_position: Position {
+            x: first_body_position_x,
+            y: first_body_position_y,
+        },
+    });
 }
 
 fn size_scaling(mut windows: Query<&mut Window>, mut query: Query<(&Size, &mut Sprite)>) {
@@ -237,23 +244,23 @@ fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut Snak
                 commands.trigger(CheckSnakeEatBody {
                     snake_position: Position {
                         x: next_translation_x,
-                        y: next_translation_y},
+                        y: next_translation_y
+                    },
                 });
 
                 commands.trigger(CheckSnakeEatFood {
                     snake_position: Position {
                         x: next_translation_x,
-                        y: next_translation_y},
+                        y: next_translation_y
+                    },
                 });
 
-                if let Some(next_body) = snake_head.next_body {
-                    commands.trigger(NextBody {
-                        entity: next_body,
-                        follow_position: Position {
-                            x: position_snake_head.x,
-                            y: position_snake_head.y},
-                    });
-                }
+                commands.trigger(FollowBody {
+                    snake_position: Position {
+                        x: position_snake_head.x,
+                        y: position_snake_head.y
+                    },
+                });
 
                 position_snake_head.x = next_translation_x;
                 position_snake_head.y = next_translation_y;
@@ -262,8 +269,10 @@ fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut Snak
     }
 }
 
-fn spawn_body(commands: &mut Commands, position_x: i32, position_y: i32) -> Entity {
-    commands.spawn((
+fn body_spawner(trigger: Trigger<SpawnBody>, mut commands: Commands, mut query_snake_head: Query<&mut SnakeHead>) {
+    let event = trigger.event();
+    let mut snake_head = query_snake_head.single_mut();
+    snake_head.bodies.push(commands.spawn((
         SpriteBundle {
             sprite: Sprite {
                 color: Color::srgba(0.3, 0.3, 0.3, 1.0),
@@ -271,18 +280,16 @@ fn spawn_body(commands: &mut Commands, position_x: i32, position_y: i32) -> Enti
             },
             ..default()
         },
-        SnakeBody {
-            next_body: None,
-        },
+        SnakeBody,
         Position {
-            x: position_x,
-            y: position_y,
+            x: event.body_position.x,
+            y: event.body_position.y,
         },
         Size {
             scale: 0.65
         },
         Collider,
-    )).id()
+    )).id());
 }
 
 fn food_spawner(trigger: Trigger<SpawnFood>, mut commands: Commands, mut query_position: Query<&Position>) {
@@ -322,42 +329,42 @@ fn food_spawner(trigger: Trigger<SpawnFood>, mut commands: Commands, mut query_p
     }
 }
 
-fn body_follow_front(trigger: Trigger<NextBody>, mut commands: Commands, mut query_snake_body: Query<(&mut SnakeBody, &mut Position)>) {
+fn body_follow_front(trigger: Trigger<FollowBody>, mut query_snake_head: Query<&mut SnakeHead>, mut query_snake_position: Query<&mut Position>) {
     let event = trigger.event();
-    if let Ok((snake_body, mut position)) = query_snake_body.get_mut(event.entity) {
-        if let Some(next_body) = snake_body.next_body {
-            commands.trigger(NextBody {
-                entity: next_body,
-                follow_position: Position {
-                    x: position.x,
-                    y: position.y,
-                },
-            });
+    for snake_head in query_snake_head.iter_mut() {
+        let mut iter_body = snake_head.bodies.iter().rev().peekable();
+        while let Some(entity_now_body) = iter_body.next() {
+            let (next_position_x, next_position_y) = if let Some(entity_previous_body) = iter_body.peek() {
+                if let Ok(position_previous_body) = query_snake_position.get(**entity_previous_body) {
+                    (Some(position_previous_body.x), Some(position_previous_body.y))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (Some(event.snake_position.x), Some(event.snake_position.y))
+            };
+
+            if let Ok(mut position_now_body) = query_snake_position.get_mut(*entity_now_body) {
+                if let (Some(next_position_x_val), Some(next_position_y_val)) = (next_position_x, next_position_y) {
+                    position_now_body.x = next_position_x_val;
+                    position_now_body.y = next_position_y_val;
+                }
+            }
         }
-        position.x = event.follow_position.x;
-        position.y = event.follow_position.y;
     }
 }
 
-fn check_snake_eat_food(trigger: Trigger<CheckSnakeEatFood>, mut commands: Commands, mut query_snake_head: Query<&SnakeHead>, mut query_snake_body: Query<&mut SnakeBody>, mut query_food: Query<(&mut Position, Entity), With<Food>>) {
+fn check_snake_eat_food(trigger: Trigger<CheckSnakeEatFood>, mut commands: Commands, mut query_food: Query<(&mut Position, Entity), With<Food>>) {
     let event = trigger.event();
     for (position, entity) in query_food.iter_mut() {
         if event.snake_position.x == position.x && event.snake_position.y == position.y {
             commands.entity(entity).despawn();
-            let snake_head = query_snake_head.single_mut();
-            let mut entity_next_body = snake_head.next_body;
-            loop {
-                if let Some(some_entity_next_body) = entity_next_body {
-                    if let Ok(mut snake_body) = query_snake_body.get_mut(some_entity_next_body) {
-                        if snake_body.next_body.is_some() {
-                            entity_next_body = snake_body.next_body
-                        } else {
-                            snake_body.next_body = Some(spawn_body(&mut commands, position.x, position.y));
-                            break;
-                        }
-                    }
-                }
-            }
+            commands.trigger(SpawnBody {
+                body_position: Position {
+                    x: position.x,
+                    y: position.y,
+                },
+            });
             commands.trigger(SpawnFood);
         }
     }
