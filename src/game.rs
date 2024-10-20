@@ -195,23 +195,25 @@ fn position_translation(mut windows: Query<&mut Window>, mut query: Query<(&Posi
     }
 }
 
-fn snake_direction_change(keyboard_input: Res<ButtonInput<KeyCode>>, mut query: Query<&mut SnakeHead>) {
-    if let Some(mut head) = query.iter_mut().next() {
-        if keyboard_input.pressed(KeyCode::ArrowLeft) {
-            if !matches!(head.direction, Direction::Right) {
-                head.direction = Direction::Left;
-            }
-        } else if keyboard_input.pressed(KeyCode::ArrowRight) {
-            if !matches!(head.direction, Direction::Left) {
-                head.direction = Direction::Right;
-            }
-        } else if keyboard_input.pressed(KeyCode::ArrowDown) {
-            if !matches!(head.direction, Direction::Up) {
-                head.direction = Direction::Down;
-            }
-        } else if keyboard_input.pressed(KeyCode::ArrowUp) {
-            if !matches!(head.direction, Direction::Down) {
-                head.direction = Direction::Up;
+fn snake_direction_change(keyboard_input: Res<ButtonInput<KeyCode>>, mut query_snake_head: Query<(Entity, &mut SnakeHead)>, query_position: Query<&Position>) {
+    for (entity_snake_head, mut snake_head) in query_snake_head.iter_mut() {
+        if let Ok(position_snake_head) =  query_position.get(entity_snake_head) {
+            if let Some(first_body) = snake_head.bodies.first() {
+                if let Ok(position_first_body) =  query_position.get(*first_body) {
+                    if position_snake_head.y == position_first_body.y {
+                        if keyboard_input.pressed(KeyCode::ArrowUp) {
+                            snake_head.direction = Direction::Up;
+                        } else if keyboard_input.pressed(KeyCode::ArrowDown) {
+                            snake_head.direction = Direction::Down;
+                        }
+                    } else if position_snake_head.x == position_first_body.x {
+                        if keyboard_input.pressed(KeyCode::ArrowLeft) {
+                            snake_head.direction = Direction::Left;
+                        } else if keyboard_input.pressed(KeyCode::ArrowRight) {
+                            snake_head.direction = Direction::Right;
+                        }
+                    }
+                }
             }
         }
     }
@@ -224,17 +226,17 @@ fn snake_movement(mut commands: Commands, mut query_snake_head: Query<(&mut Snak
             let mut next_translation_x = position_snake_head.x;
             let mut next_translation_y = position_snake_head.y;
             match snake_head.direction {
+                Direction::Up => {
+                    next_translation_y += 1;
+                }
+                Direction::Down => {
+                    next_translation_y -= 1;
+                }
                 Direction::Left => {
                     next_translation_x -= 1;
                 }
                 Direction::Right => {
                     next_translation_x += 1;
-                }
-                Direction::Down => {
-                    next_translation_y -= 1;
-                }
-                Direction::Up => {
-                    next_translation_y += 1;
                 }
             }
 
