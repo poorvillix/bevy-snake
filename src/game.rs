@@ -372,11 +372,15 @@ fn check_snake_eat_food(trigger: Trigger<CheckSnakeEatFood>, mut commands: Comma
     }
 }
 
-fn check_snake_eat_body(trigger: Trigger<CheckSnakeEatBody>, mut commands: Commands, mut query_snake_body: Query<&Position, With<SnakeBody>>) {
+fn check_snake_eat_body(trigger: Trigger<CheckSnakeEatBody>, mut commands: Commands, mut query_snake_head: Query<&mut SnakeHead>, mut query_position_snake_body: Query<&Position, With<SnakeBody>>) {
     let event = trigger.event();
-    for position in query_snake_body.iter_mut() {
-        if event.snake_position.x == position.x && event.snake_position.y == position.y {
-            commands.trigger(GameOverEvent);
+    let snake_head = query_snake_head.single_mut();
+    let snake_bodies_without_last: Vec<Entity> = snake_head.bodies.iter().take(snake_head.bodies.len() - 1).cloned().collect();
+    for body in snake_bodies_without_last.iter() {
+        if let Ok(position) = query_position_snake_body.get_mut(*body) {
+            if event.snake_position.x == position.x && event.snake_position.y == position.y {
+                commands.trigger(GameOverEvent);
+            }
         }
     }
 }
